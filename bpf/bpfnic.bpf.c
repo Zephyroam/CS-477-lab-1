@@ -318,9 +318,10 @@ int bpf_redirect_roundrobin(struct xdp_md *ctx)
 
 	// TODO: make redirection decision
 	// use round-robin to select a CPU
-	cpu_selected = bpf_map_lookup_elem(&cpu_iter, &key0);
-	if (!cpu_selected)
+	cpu_iterator = bpf_map_lookup_elem(&cpu_iter, &key0);
+	if (!cpu_iterator)
 		return XDP_DROP;
+	cpu_selected = cpu_iterator;
 	
 	cpu_count = bpf_map_lookup_elem(&cpus_count, &key0);
 	if (!cpu_count)
@@ -406,7 +407,67 @@ int bpf_redirect_roundrobin_core_separated(struct xdp_md *ctx)
 		return XDP_PASS;
 
 	// TODO: make redirection decision
-	return XDP_DROP;
+
+	// detect the request type
+	packet = (struct packet *)(nh.pos);
+	if (packet + 1 > data_end)
+		return XDP_DROP;
+	if (packet->data < 10) {
+		cpu_iterator_short = bpf_map_lookup_elem(&cpu_iter_core_separated, &key0);
+		if (!cpu_iterator_short)
+			return XDP_DROP;
+		cpu_selected = cpu_iterator_short;
+		cpu_count_short = bpf_map_lookup_elem(&cpu_count_core_separated, &key0);
+		if (!cpu_count_short)
+			return XDP_DROP;
+		// add 1 to the iterator
+		__sync_fetch_and_add(cpu_selected, 1);
+		// if the iterator is greater than the number of cpus, reset it
+		if (*cpu_selected >= *cpu_count_short) {
+			*cpu_selected = 0;
+		}
+		// check if the selected CPU is available
+		if (bpf_map_lookup_elem(&cpus_available_short_reqs, cpu_selected)) {
+			cpu_dest = *cpu_selected;
+		} else {
+			return XDP_ABORTED;
+		}
+		bpf_printk("short request");
+	} else
+	 {
+		cpu_iterator_long = bpf_map_lookup_elem(&cpu_iter_core_separated, &key1);
+		if (!cpu_iterator_long)
+			return XDP_DROP;
+		cpu_selected = cpu_iterator_long;
+		cpu_count_long = bpf_map_lookup_elem(&cpu_count_core_separated, &key1);
+		if (!cpu_count_long)
+			return XDP_DROP;
+		// add 1 to the iterator
+		__sync_fetch_and_add(cpu_selected, 1);
+		// if the iterator is greater than the number of cpus, reset it
+		if (*cpu_selected >= *cpu_count_long) {
+			*cpu_selected = 0;
+		}
+		// check if the selected CPU is available
+		if (bpf_map_lookup_elem(&cpus_available_long_reqs, cpu_selected)) {
+			cpu_dest = *cpu_selected;
+		} else {
+			return XDP_ABORTED;
+		}
+		cpu_count_short = bpf_map_lookup_elem(&cpu_count_core_separated, &key0);
+		if (!cpu_count_short)
+			return XDP_DROP;
+		cpu_dest += *cpu_count_short;
+		bpf_printk("long request, cpu_dest = %d", cpu_dest);
+	}
+
+	// redirect packet to selected CPU
+	long ret = bpf_redirect_map(&cpu_map, cpu_dest, 0);
+	if (ret != XDP_REDIRECT)
+		bpf_printk("bpf_redirect_map failure: ret code = %d", ret);
+
+
+	return ret;
 }
 
 SEC("tc")
