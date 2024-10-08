@@ -318,16 +318,16 @@ int bpf_redirect_roundrobin(struct xdp_md *ctx)
 
 	// TODO: make redirection decision
 	// use round-robin to select a CPU
-	__u32 cpu_iter_key = 0;
-	cpu_selected = bpf_map_lookup_elem(&cpu_iter, &cpu_iter_key);
+	cpu_selected = bpf_map_lookup_elem(&cpu_iter, &key0);
 	if (!cpu_selected)
 		return XDP_DROP;
-	// add 1 to the iterator
-	__sync_fetch_and_add(cpu_selected, 1);
 	
 	cpu_count = bpf_map_lookup_elem(&cpus_count, &key0);
 	if (!cpu_count)
 		return XDP_DROP;
+
+	// add 1 to the iterator
+	__sync_fetch_and_add(cpu_selected, 1);
 	// if the iterator is greater than the number of cpus, reset it
 	if (*cpu_selected >= *cpu_count) {
 		*cpu_selected = 0;
@@ -341,8 +341,7 @@ int bpf_redirect_roundrobin(struct xdp_md *ctx)
 	}
 
 	// redirect packet to selected CPU
-	cpu_idx = cpu_dest;
-	long ret = bpf_redirect_map(&cpu_map, cpu_idx, 0);
+	long ret = bpf_redirect_map(&cpu_map, cpu_dest, 0);
 	if (ret != XDP_REDIRECT)
 		bpf_printk("bpf_redirect_map failure: ret code = %d", ret);
 
